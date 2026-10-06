@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'source_bundle/full_v113.tar.xz'
+      - 'source_bundle/full_v113.b64'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -24,12 +24,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract complete v1.1.3 source
+      - name: Reconstruct v1.1.3 source
         shell: pwsh
         run: |
-          if (!(Test-Path "source_bundle/full_v113.tar.xz")) { throw "Complete source bundle not found" }
+          if (!(Test-Path "source_bundle/full_v113.b64")) { throw "Base64 source bundle not found" }
+          $b64 = (Get-Content "source_bundle/full_v113.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("source_bundle_v113.tar.xz", [Convert]::FromBase64String($b64))
           New-Item -ItemType Directory -Force -Path reconstructed | Out-Null
-          tar -xf source_bundle/full_v113.tar.xz -C reconstructed
+          tar -xf source_bundle_v113.tar.xz -C reconstructed
           if ($LASTEXITCODE -ne 0) { throw "Could not extract source bundle" }
           $spec = Get-ChildItem reconstructed -Filter "MIDI_Premium_2.spec" -File -Recurse | Select-Object -First 1
           if (-not $spec) { throw "MIDI_Premium_2.spec not found after extraction" }
