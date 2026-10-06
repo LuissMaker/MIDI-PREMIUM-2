@@ -1,10 +1,15 @@
 name: Build and publish MIDI Premium 2
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'source_bundle/v111_xz_*.b64'
+      - 'MIDI_Premium_2.spec'
+      - 'MIDI_Premium_2_Setup.iss'
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: write
@@ -16,13 +21,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Reconstruct v1.1.1 source
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem source_bundle/v111_xz_*.b64 | Sort-Object Name
+          if ($parts.Count -ne 8) { throw "Expected 8 source chunks, found $($parts.Count)" }
+          $b64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          [IO.File]::WriteAllBytes('midi_src_v111.tar.xz', [Convert]::FromBase64String($b64))
+          tar -xf midi_src_v111.tar.xz
+          if (!(Test-Path 'app_source/main.py')) { throw 'Source reconstruction failed' }
+
       - name: Setup Python 3.11 x64
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           architecture: 'x64'
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
@@ -32,16 +47,7 @@ jobs:
         shell: pwsh
         run: choco install innosetup -y --no-progress
 
-      - name: Read version
-        id: ver
-        shell: pwsh
-        run: |
-          $line = Select-String -Path app_source/app/version.py -Pattern '__version__ = "([0-9.]+)' | Select-Object -First 1
-          if (-not $line) { throw 'Version not found' }
-          $v = $line.Matches[0].Groups[1].Value
-          "version=$v" >> $env:GITHUB_OUTPUT
-
-      - name: Build app
+      - name: Build application
         shell: pwsh
         run: |
           python -m PyInstaller --noconfirm --clean MIDI_Premium_2.spec
@@ -51,18 +57,21 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Compress-Archive -Path 'dist/MIDI Premium 2/*' -DestinationPath 'release/MIDI_Premium_2_v${{ steps.ver.outputs.version }}_Portable.zip' -Force
+          Compress-Archive -Path 'dist/MIDI Premium 2/*' -DestinationPath 'release/MIDI_Premium_2_v1.1.1_Portable.zip' -Force
 
       - name: Build installer
         shell: pwsh
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss'
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
+          if (!(Test-Path 'release/MIDI_Premium_2_Setup_v1.1.1.exe')) { throw 'Installer not generated' }
 
-      - name: Publish GitHub Release
+      - name: Publish v1.1.1 release
         uses: softprops/action-gh-release@v2
         with:
-          name: MIDI Premium 2 v${{ steps.ver.outputs.version }}
+          tag_name: v1.1.1
+          name: MIDI Premium 2 v1.1.1 Stable
           body_path: app_source/CHANGELOG.md
           files: |
-            release/MIDI_Premium_2_v${{ steps.ver.outputs.version }}_Portable.zip
-            release/MIDI_Premium_2_Setup_v${{ steps.ver.outputs.version }}.exe
+            release/MIDI_Premium_2_v1.1.1_Portable.zip
+            release/MIDI_Premium_2_Setup_v1.1.1.exe
           make_latest: true
