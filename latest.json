@@ -1,0 +1,8 @@
+{
+  "version": "1.1.0",
+  "tag": "v1.1.0",
+  "repo": "LuissMaker/MIDI-PREMIUM-2",
+  "setup_asset": "MIDI_Premium_2_Setup_v1.1.0.exe",
+  "portable_asset": "MIDI_Premium_2_v1.1.0_Portable.zip",
+  "notes": "Nuevo sistema de actualizaciones por GitHub, comprobación automática al iniciar y búsqueda manual desde Configuración."
+}
