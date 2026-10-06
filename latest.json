@@ -1,0 +1,8 @@
+{
+  "version": "1.1.2",
+  "tag": "v1.1.2",
+  "repo": "LuissMaker/MIDI-PREMIUM-2",
+  "setup_asset": "MIDI_Premium_2_Setup_v1.1.2.exe",
+  "portable_asset": "MIDI_Premium_2_v1.1.2_Portable.zip",
+  "notes": "PADs más cuadrados y compactos, ventana con menos espacio muerto y OSD corregido para no recortarse ni salirse del área útil del monitor."
+}
