@@ -1,8 +1,0 @@
-{
-  "version": "1.1.3",
-  "tag": "v1.1.3",
-  "repo": "LuissMaker/MIDI-PREMIUM-2",
-  "setup_asset": "MIDI_Premium_2_Setup_v1.1.3.exe",
-  "portable_asset": "MIDI_Premium_2_v1.1.3_Portable.zip",
-  "notes": "Hotfix de arranque para v1.1.2: corrige la importación faltante de QSizePolicy sin cambiar perfiles ni asignaciones."
-}

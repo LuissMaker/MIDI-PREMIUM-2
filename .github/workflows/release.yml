@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'source_bundle/full_v113.b64'
+      - 'source_bundle/full_v114.b64'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -24,14 +24,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Reconstruct v1.1.3 source
+      - name: Reconstruct v1.1.4 source
         shell: pwsh
         run: |
-          if (!(Test-Path "source_bundle/full_v113.b64")) { throw "Base64 source bundle not found" }
-          $b64 = (Get-Content "source_bundle/full_v113.b64" -Raw).Trim()
-          [IO.File]::WriteAllBytes("source_bundle_v113.tar.xz", [Convert]::FromBase64String($b64))
+          if (!(Test-Path "source_bundle/full_v114.b64")) { throw "Base64 source bundle not found" }
+          $b64 = (Get-Content "source_bundle/full_v114.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("source_bundle_v114.tar.xz", [Convert]::FromBase64String($b64))
           New-Item -ItemType Directory -Force -Path reconstructed | Out-Null
-          tar -xf source_bundle_v113.tar.xz -C reconstructed
+          tar -xf source_bundle_v114.tar.xz -C reconstructed
           if ($LASTEXITCODE -ne 0) { throw "Could not extract source bundle" }
           $spec = Get-ChildItem reconstructed -Filter "MIDI_Premium_2.spec" -File -Recurse | Select-Object -First 1
           if (-not $spec) { throw "MIDI_Premium_2.spec not found after extraction" }
@@ -68,30 +68,32 @@ jobs:
         run: |
           Set-Location "$env:PROJECT_ROOT"
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.3_Portable.zip" -Force
+          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.4_Portable.zip" -Force
 
       - name: Build installer
         shell: pwsh
         run: |
           Set-Location "$env:PROJECT_ROOT"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
-          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.3.exe")) { throw "Installer not generated" }
+          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.4.exe")) { throw "Installer not generated" }
 
-      - name: Publish v1.1.3
+      - name: Publish v1.1.4
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.3
-          name: MIDI Premium 2 v1.1.3
+          tag_name: v1.1.4
+          name: MIDI Premium 2 v1.1.4
           body: |
-            MIDI Premium 2 v1.1.3
+            MIDI Premium 2 v1.1.4
 
-            - Hotfix de arranque para v1.1.2.
-            - Corrige la importación faltante de QSizePolicy.
-            - Mantiene los PADs compactos, la limpieza visual y el OSD corregido.
-            - Conserva perfiles, PADs y configuración existente.
+            - Reorganización completa del modo compacto para eliminar espacios muertos.
+            - Controlador, BANK A/B y estado MIDI en una sola barra.
+            - PADs más cuadrados, alineados y con títulos de hasta dos líneas.
+            - Perillas K1–K8 más bajas y compactas.
+            - Geometría compacta limitada para evitar ventanas innecesariamente altas.
+            - Conserva las correcciones del OSD y los perfiles/configuraciones existentes.
           files: |
-            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.3_Portable.zip
-            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.3.exe
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.4_Portable.zip
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.4.exe
           make_latest: true
 
       - name: Publish update manifest after release
@@ -100,17 +102,17 @@ jobs:
           Set-Location "$env:GITHUB_WORKSPACE"
           @'
           {
-            "version": "1.1.3",
-            "tag": "v1.1.3",
+            "version": "1.1.4",
+            "tag": "v1.1.4",
             "repo": "LuissMaker/MIDI-PREMIUM-2",
-            "setup_asset": "MIDI_Premium_2_Setup_v1.1.3.exe",
-            "portable_asset": "MIDI_Premium_2_v1.1.3_Portable.zip",
-            "notes": "Hotfix de arranque para v1.1.2: corrige la importación faltante de QSizePolicy sin cambiar perfiles ni asignaciones."
+            "setup_asset": "MIDI_Premium_2_Setup_v1.1.4.exe",
+            "portable_asset": "MIDI_Premium_2_v1.1.4_Portable.zip",
+            "notes": "Reorganización completa del modo compacto: sin espacios muertos, barra Controlador/Banks/MIDI unificada, PADs cuadrados y legibles, perillas más compactas."
           }
           '@ | Set-Content latest.json -Encoding utf8
           git config user.name "MIDI Premium Release Bot"
           git config user.email "actions@users.noreply.github.com"
           git add latest.json
           if (git diff --cached --quiet) { exit 0 }
-          git commit -m "Publish v1.1.3 update manifest [skip ci]"
+          git commit -m "Publish v1.1.4 update manifest [skip ci]"
           git push origin HEAD:main
