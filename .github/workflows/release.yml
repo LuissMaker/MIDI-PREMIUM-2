@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'source_bundle/full_v114.b64'
+      - 'patches_v115/**'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Reconstruct v1.1.4 source
         shell: pwsh
         run: |
@@ -34,71 +35,92 @@ jobs:
           $spec = Get-ChildItem reconstructed -Filter "MIDI_Premium_2.spec" -File -Recurse | Select-Object -First 1
           if (-not $spec) { throw "MIDI_Premium_2.spec not found" }
           "PROJECT_ROOT=$($spec.Directory.FullName)" >> $env:GITHUB_ENV
+
+      - name: Apply v1.1.5 changes
+        shell: pwsh
+        run: |
+          Set-Location "$env:PROJECT_ROOT"
+          git apply "$env:GITHUB_WORKSPACE/patches_v115/v115.patch"
+          if ($LASTEXITCODE -ne 0) { throw "Could not apply v1.1.5 patch" }
+          $icon64 = (Get-Content "$env:GITHUB_WORKSPACE/patches_v115/app_icon_ico.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("$env:PROJECT_ROOT/app_source/assets/app_icon.ico", [Convert]::FromBase64String($icon64))
+
       - name: Setup Python 3.11 x64
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           architecture: 'x64'
+
       - name: Install dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r "$env:PROJECT_ROOT/app_source/requirements.txt" pyinstaller==6.11.1
           choco install innosetup -y --no-progress
+
       - name: Verify source
         shell: pwsh
         run: |
           python -m compileall -q "$env:PROJECT_ROOT/app_source"
           Get-Content "$env:PROJECT_ROOT/app_source/app/version.py"
+
       - name: Build application
         shell: pwsh
         run: |
           Set-Location "$env:PROJECT_ROOT"
           python -m PyInstaller --noconfirm --clean MIDI_Premium_2.spec
           if (!(Test-Path "dist/MIDI Premium 2/MIDI Premium 2.exe")) { throw "Executable not generated" }
+
       - name: Package portable
         shell: pwsh
         run: |
           Set-Location "$env:PROJECT_ROOT"
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.4_Portable.zip" -Force
+          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.5_Portable.zip" -Force
+
       - name: Build installer
         shell: pwsh
         run: |
           Set-Location "$env:PROJECT_ROOT"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
-          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.4.exe")) { throw "Installer not generated" }
-      - name: Publish v1.1.4
+          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.5.exe")) { throw "Installer not generated" }
+
+      - name: Publish v1.1.5
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.4
-          name: MIDI Premium 2 v1.1.4
+          tag_name: v1.1.5
+          name: MIDI Premium 2 v1.1.5
           body: |
-            - Reorganización completa del modo compacto para eliminar espacios muertos.
-            - Controlador, BANK A/B y estado MIDI en una sola barra.
-            - PADs más cuadrados, alineados y con títulos legibles.
-            - Perillas K1–K8 más bajas y compactas.
-            - Conserva OSD corregido, perfiles y configuraciones.
+            MIDI Premium 2 v1.1.5
+
+            - Nuevo icono oficial adaptado al EXE, instalador y tamaños de Windows.
+            - Selector "Insertar desde PSD" rediseñado con búsqueda, filtros, favoritos, recientes y contador.
+            - Doble clic para insertar directamente un elemento PSD.
+            - Filtro real de capas/grupos visibles.
+            - Configuración compacta, con Guardar/Cancelar siempre accesibles.
+            - Corrección del OSD en la primera aparición.
           files: |
-            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.4_Portable.zip
-            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.4.exe
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.5_Portable.zip
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.5.exe
           make_latest: true
+
       - name: Publish update manifest
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE"
           @'
           {
-            "version": "1.1.4",
-            "tag": "v1.1.4",
+            "version": "1.1.5",
+            "tag": "v1.1.5",
             "repo": "LuissMaker/MIDI-PREMIUM-2",
-            "setup_asset": "MIDI_Premium_2_Setup_v1.1.4.exe",
-            "portable_asset": "MIDI_Premium_2_v1.1.4_Portable.zip",
-            "notes": "Modo compacto reorganizado sin espacios muertos, PADs cuadrados y perillas más compactas."
+            "setup_asset": "MIDI_Premium_2_Setup_v1.1.5.exe",
+            "portable_asset": "MIDI_Premium_2_v1.1.5_Portable.zip",
+            "notes": "Nuevo selector PSD, configuración compacta, OSD corregido en primera aparición y nuevo icono oficial."
           }
           '@ | Set-Content latest.json -Encoding utf8
           git config user.name "MIDI Premium Release Bot"
           git config user.email "actions@users.noreply.github.com"
           git add latest.json
-          git commit -m "Publish v1.1.4 update manifest [skip ci]"
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m "Publish v1.1.5 update manifest [skip ci]"
           git push origin HEAD:main
