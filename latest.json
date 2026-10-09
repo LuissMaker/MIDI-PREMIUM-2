@@ -1,8 +1,1 @@
-{
-  "version": "1.1.4",
-  "tag": "v1.1.4",
-  "repo": "LuissMaker/MIDI-PREMIUM-2",
-  "setup_asset": "MIDI_Premium_2_Setup_v1.1.4.exe",
-  "portable_asset": "MIDI_Premium_2_v1.1.4_Portable.zip",
-  "notes": "Modo compacto reorganizado sin espacios muertos, PADs cuadrados y perillas más compactas."
-}
+{"version":"1.1.5","tag":"v1.1.5","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.5.exe","portable_asset":"MIDI_Premium_2_v1.1.5_Portable.zip","notes":"Nuevo selector PSD, configuración compacta, OSD corregido en primera aparición y nuevo icono oficial."}
