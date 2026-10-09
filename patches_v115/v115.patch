@@ -1,0 +1,487 @@
+--- a/app_source/main.py
++++ b/app_source/main.py
+@@ -3,8 +3,10 @@
+ import logging
+ import sys
+ import traceback
++from pathlib import Path
+ from logging.handlers import RotatingFileHandler
+ 
++from PySide6.QtGui import QIcon
+ from PySide6.QtWidgets import QApplication, QMessageBox
+ 
+ from app.actions.engine import ActionEngine
+@@ -17,6 +19,8 @@
+ from app.ui.main_window import MainWindow
+ from app.ui.theme import DARK_STYLESHEET
+ 
++APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
++
+ 
+ def configure_logging(paths: AppPaths) -> logging.Logger:
+     logger = logging.getLogger("midi_premium_2")
+@@ -45,6 +49,8 @@
+ 
+     app = QApplication(sys.argv)
+     app.setApplicationName("MIDI Premium 2")
++    if APP_ICON_PATH.exists():
++        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
+     app.setStyleSheet(DARK_STYLESHEET)
+ 
+     try:
+--- a/app_source/app/actions/photoshop_psd.py
++++ b/app_source/app/actions/photoshop_psd.py
+@@ -194,7 +194,7 @@
+     if (!outputFile.opened) outputFile.open("w");
+     outputFile.writeln(text);
+ }}
+-function writeElement(kind, parts) {{
++function writeElement(kind, visible, parts) {{
+     var encoded = [];
+     var j;
+     for (j = 0; j < parts.length; j++) encoded.push(safeEncode(parts[j]));
+@@ -208,7 +208,7 @@
+         for (j = 0; j < parts.length; j++) next.push(parts[j]);
+         next.push(layer.name);
+         kind = (layer.typename == "LayerSet") ? "group" : "layer";
+-        writeElement(kind, next);
++        writeElement(kind, layer.visible, next);
+         if (layer.typename == "LayerSet") walk(layer, next);
+     }}
+ }}
+@@ -249,12 +249,19 @@
+         for raw in raw_items:
+             if "\t" not in raw:
+                 continue
+-            kind, encoded = raw.split("\t", 1)
++            fields = raw.split("\t", 2)
++            if len(fields) == 3:
++                kind, visible_raw, encoded = fields
++                visible = visible_raw == "1"
++            else:
++                kind, encoded = raw.split("\t", 1)
++                visible = True
+             parts = [unquote(p) for p in encoded.split("|") if p != ""]
+             if parts:
+                 items.append(
+                     {
+                         "kind": kind,
++                        "visible": visible,
+                         "path": parts,
+                         "label": " / ".join(parts),
+                     }
+--- a/app_source/app/widgets/config_dialogs.py
++++ b/app_source/app/widgets/config_dialogs.py
+@@ -3,12 +3,12 @@
+ from pathlib import Path
+ import shutil
+ 
+-from PySide6.QtCore import Qt, Signal, QSize, QUrl
++from PySide6.QtCore import Qt, Signal, QSize, QUrl, QTimer
+ from PySide6.QtGui import QIcon, QDesktopServices
+ from PySide6.QtWidgets import (
+     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+     QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+-    QListWidgetItem, QPushButton, QTabWidget, QVBoxLayout, QWidget,
++    QListWidgetItem, QPushButton, QTabWidget, QVBoxLayout, QWidget, QButtonGroup, QScrollArea,
+ )
+ 
+ from app.widgets.action_editor import ActionEditor
+@@ -91,63 +91,120 @@
+ 
+ 
+ class PsdElementPickerDialog(QDialog):
+-    def __init__(self, items: list[dict], title: str = "Elegir elementos PSD", parent=None) -> None:
++    _recent_paths: list[tuple[str, ...]] = []
++    _favorite_paths: set[tuple[str, ...]] = set()
++
++    def __init__(self, items: list[dict], title: str = "Insertar desde PSD", parent=None) -> None:
+         super().__init__(parent)
+         self.setWindowTitle(title)
+-        self.resize(560, 600)
++        self.setMinimumWidth(560)
++        self.resize(620, max(360, min(610, 260 + min(len(items), 10) * 31)))
+         self.selected_paths: list[list[str]] = []
+-        # Compatibilidad con código antiguo que esperaba una sola ruta.
+         self.selected_path: list[str] = []
++        self._items = list(items)
+ 
+         layout = QVBoxLayout(self)
+-        note = QLabel(
+-            "Marca una o varias capas/grupos para insertarlos juntos en el documento activo de Photoshop."
+-        )
++        layout.setContentsMargins(14, 12, 14, 12)
++        layout.setSpacing(8)
++
++        note = QLabel("Selecciona las capas o grupos que quieres insertar en el documento activo.")
+         note.setObjectName("Muted")
+         note.setWordWrap(True)
+         layout.addWidget(note)
+ 
+         self.search = QLineEdit()
+-        self.search.setPlaceholderText("Buscar elemento…")
++        self.search.setPlaceholderText("Buscar capas o grupos…")
++        self.search.setClearButtonEnabled(True)
+         layout.addWidget(self.search)
+ 
+-        quick_row = QHBoxLayout()
+-        select_all = QPushButton("Seleccionar visibles")
+-        clear_all = QPushButton("Quitar selección")
+-        select_all.clicked.connect(self._check_visible)
+-        clear_all.clicked.connect(self._uncheck_all)
+-        quick_row.addWidget(select_all)
+-        quick_row.addWidget(clear_all)
+-        quick_row.addStretch(1)
+-        layout.addLayout(quick_row)
++        filter_row = QHBoxLayout(); filter_row.setSpacing(5)
++        self.filter_group = QButtonGroup(self); self.filter_group.setExclusive(True)
++        self.filter_buttons = {}
++        for key, label in (("all","Todos"),("layer","Capas"),("group","Grupos"),("visible","Visibles"),("recent","Recientes")):
++            btn = QPushButton(label); btn.setCheckable(True)
++            self.filter_group.addButton(btn); self.filter_buttons[key] = btn; filter_row.addWidget(btn)
++            btn.clicked.connect(self._filter)
++        self.filter_buttons["all"].setChecked(True)
++        filter_row.addStretch(1)
++        self.favorite_only = QPushButton("★ Favoritos"); self.favorite_only.setCheckable(True)
++        self.favorite_only.clicked.connect(self._filter); filter_row.addWidget(self.favorite_only)
++        layout.addLayout(filter_row)
++
++        tools = QHBoxLayout(); tools.setSpacing(5)
++        self.select_all = QPushButton("Seleccionar visibles")
++        self.clear_all = QPushButton("Quitar selección")
++        self.favorite_current = QPushButton("☆ Marcar favorito")
++        self.select_all.clicked.connect(self._check_visible)
++        self.clear_all.clicked.connect(self._uncheck_all)
++        self.favorite_current.clicked.connect(self._toggle_favorite_current)
++        tools.addWidget(self.select_all); tools.addWidget(self.clear_all); tools.addStretch(1); tools.addWidget(self.favorite_current)
++        layout.addLayout(tools)
+ 
+         self.list = QListWidget()
++        self.list.setSpacing(1)
+         layout.addWidget(self.list, 1)
+-        for item in items:
+-            prefix = "Grupo" if item.get("kind") == "group" else "Capa"
+-            row = QListWidgetItem(f"{prefix} · {item.get('label', '')}")
+-            row.setData(Qt.ItemDataRole.UserRole, list(item.get("path", []) or []))
++        for data in self._items:
++            path = tuple(data.get("path", []) or [])
++            kind = str(data.get("kind", "layer"))
++            visible = bool(data.get("visible", True))
++            label = str(data.get("label", ""))
++            symbol = "▣" if kind == "group" else "▤"
++            star = "★ " if path in self._favorite_paths else ""
++            row = QListWidgetItem(f"{star}{symbol}  {label}")
++            row.setData(Qt.ItemDataRole.UserRole, list(path))
++            row.setData(Qt.ItemDataRole.UserRole + 1, kind)
++            row.setData(Qt.ItemDataRole.UserRole + 2, visible)
++            row.setData(Qt.ItemDataRole.UserRole + 3, label)
+             row.setFlags(row.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+             row.setCheckState(Qt.CheckState.Unchecked)
++            if not visible:
++                row.setToolTip("Oculto en el PSD")
+             self.list.addItem(row)
+ 
+-        self.search.textChanged.connect(self._filter)
+-        # Doble clic alterna la casilla; no cierra la ventana.
+-        self.list.itemDoubleClicked.connect(self._toggle_item)
+-
+-        buttons = QDialogButtonBox(
+-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+-        )
+-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Insertar seleccionados")
+-        buttons.accepted.connect(self.accept)
+-        buttons.rejected.connect(self.reject)
+-        layout.addWidget(buttons)
++        footer = QHBoxLayout()
++        self.count_label = QLabel("0 seleccionados")
++        self.count_label.setObjectName("Muted")
++        footer.addWidget(self.count_label)
++        footer.addStretch(1)
++        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
++        self.insert_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
++        self.insert_button.setText("Insertar")
++        self.insert_button.setEnabled(False)
++        self.buttons.accepted.connect(self.accept); self.buttons.rejected.connect(self.reject)
++        footer.addWidget(self.buttons)
++        layout.addLayout(footer)
+ 
+-    def _filter(self, text: str) -> None:
+-        q = text.strip().lower()
++        self.search.textChanged.connect(self._filter)
++        self.list.itemChanged.connect(lambda *_: self._update_count())
++        self.list.currentItemChanged.connect(lambda *_: self._update_favorite_button())
++        self.list.itemDoubleClicked.connect(self._insert_single)
++        self._filter()
++        QTimer.singleShot(0, self.search.setFocus)
++
++    def _active_filter(self) -> str:
++        for key, btn in self.filter_buttons.items():
++            if btn.isChecked():
++                return key
++        return "all"
++
++    def _filter(self, *_args) -> None:
++        q = self.search.text().strip().lower()
++        mode = self._active_filter()
++        recent = set(self._recent_paths)
+         for i in range(self.list.count()):
+             item = self.list.item(i)
+-            item.setHidden(bool(q) and q not in item.text().lower())
++            path = tuple(item.data(Qt.ItemDataRole.UserRole) or [])
++            kind = str(item.data(Qt.ItemDataRole.UserRole + 1) or "layer")
++            visible = bool(item.data(Qt.ItemDataRole.UserRole + 2))
++            label = str(item.data(Qt.ItemDataRole.UserRole + 3) or "")
++            ok = (not q or q in label.lower())
++            if mode == "layer": ok = ok and kind == "layer"
++            elif mode == "group": ok = ok and kind == "group"
++            elif mode == "visible": ok = ok and visible
++            elif mode == "recent": ok = ok and path in recent
++            if self.favorite_only.isChecked(): ok = ok and path in self._favorite_paths
++            item.setHidden(not ok)
++        self._update_count()
+ 
+     def _check_visible(self) -> None:
+         for i in range(self.list.count()):
+@@ -159,12 +216,38 @@
+         for i in range(self.list.count()):
+             self.list.item(i).setCheckState(Qt.CheckState.Unchecked)
+ 
+-    def _toggle_item(self, item: QListWidgetItem) -> None:
+-        state = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
+-        item.setCheckState(state)
++    def _update_count(self) -> None:
++        count = sum(self.list.item(i).checkState() == Qt.CheckState.Checked for i in range(self.list.count()))
++        self.count_label.setText(f"{count} seleccionado" if count == 1 else f"{count} seleccionados")
++        self.insert_button.setEnabled(count > 0)
++        self.insert_button.setText("Insertar" if count == 0 else ("Insertar 1 elemento" if count == 1 else f"Insertar {count} elementos"))
++
++    def _update_favorite_button(self) -> None:
++        item = self.list.currentItem()
++        path = tuple(item.data(Qt.ItemDataRole.UserRole) or []) if item else ()
++        self.favorite_current.setEnabled(bool(path))
++        self.favorite_current.setText("★ Quitar favorito" if path in self._favorite_paths else "☆ Marcar favorito")
++
++    def _toggle_favorite_current(self) -> None:
++        item = self.list.currentItem()
++        if not item: return
++        path = tuple(item.data(Qt.ItemDataRole.UserRole) or [])
++        if not path: return
++        if path in self._favorite_paths: self._favorite_paths.remove(path)
++        else: self._favorite_paths.add(path)
++        label = str(item.data(Qt.ItemDataRole.UserRole + 3) or "")
++        kind = str(item.data(Qt.ItemDataRole.UserRole + 1) or "layer")
++        symbol = "▣" if kind == "group" else "▤"
++        item.setText(f"{'★ ' if path in self._favorite_paths else ''}{symbol}  {label}")
++        self._update_favorite_button(); self._filter()
++
++    def _insert_single(self, item: QListWidgetItem) -> None:
++        self._uncheck_all()
++        item.setCheckState(Qt.CheckState.Checked)
++        self.accept()
+ 
+     def accept(self) -> None:
+-        selected: list[list[str]] = []
++        selected = []
+         for i in range(self.list.count()):
+             item = self.list.item(i)
+             if item.checkState() == Qt.CheckState.Checked:
+@@ -172,17 +255,15 @@
+                 if path:
+                     selected.append(path)
+         if not selected:
+-            # Si el usuario no marcó nada pero dejó una fila seleccionada,
+-            # usamos esa fila como gesto rápido para no romper el flujo anterior.
+-            current = self.list.currentItem()
+-            if current:
+-                path = list(current.data(Qt.ItemDataRole.UserRole) or [])
+-                if path:
+-                    selected.append(path)
+-        if not selected:
+             return
+         self.selected_paths = selected
+         self.selected_path = list(selected[0])
++        for path in reversed(selected):
++            key = tuple(path)
++            if key in self._recent_paths:
++                self._recent_paths.remove(key)
++            self._recent_paths.insert(0, key)
++        del self._recent_paths[12:]
+         super().accept()
+ 
+ 
+@@ -474,8 +555,12 @@
+     def __init__(self, settings: dict, parent=None) -> None:
+         super().__init__(parent)
+         self.setWindowTitle("Configuración de MIDI Premium 2")
+-        self.resize(720, 650)
++        self.resize(720, 500)
++        self.setMinimumSize(680, 430)
++        self.setMaximumHeight(620)
+         layout = QVBoxLayout(self)
++        layout.setContentsMargins(12, 10, 12, 10)
++        layout.setSpacing(8)
+         tabs = QTabWidget()
+ 
+         routes = QWidget(); form = QFormLayout(routes)
+@@ -487,7 +572,12 @@
+         form.addRow("Photoshop.exe", psrow); form.addRow("Carpeta de scripts JSX", jsrow)
+         hint = QLabel("Estas rutas son globales. Los PAD de Photoshop las reutilizan para no tener que elegir Photoshop.exe una y otra vez.")
+         hint.setWordWrap(True); hint.setObjectName("Muted"); form.addRow(hint)
+-        tabs.addTab(routes, "Rutas")
++        routes_scroll = QScrollArea()
++        routes_scroll.setWidgetResizable(True)
++        routes_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
++        routes_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
++        routes_scroll.setWidget(routes)
++        tabs.addTab(routes_scroll, "Rutas")
+ 
+         behavior = QWidget(); bform = QFormLayout(behavior)
+         workspace = settings.get("workspace", {})
+@@ -535,7 +625,12 @@
+ 
+         persistence_hint = QLabel("Los presets, PAD, perillas y ajustes se guardan en una carpeta de datos compartida entre versiones de MIDI Premium 2.")
+         persistence_hint.setWordWrap(True); persistence_hint.setObjectName("Muted"); bform.addRow(persistence_hint)
+-        tabs.addTab(behavior, "Aplicación")
++        behavior_scroll = QScrollArea()
++        behavior_scroll.setWidgetResizable(True)
++        behavior_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
++        behavior_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
++        behavior_scroll.setWidget(behavior)
++        tabs.addTab(behavior_scroll, "Aplicación")
+ 
+         updates_tab = QWidget(); uform = QFormLayout(updates_tab)
+         updates_cfg = settings.get("updates", {})
+@@ -548,7 +643,12 @@
+         self.check_updates_button = QPushButton("Buscar actualizaciones ahora…")
+         self.check_updates_button.clicked.connect(lambda _=False: self.check_updates_requested.emit())
+         uform.addRow(self.check_updates_button)
+-        tabs.addTab(updates_tab, "Actualizaciones")
++        updates_tab_scroll = QScrollArea()
++        updates_tab_scroll.setWidgetResizable(True)
++        updates_tab_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
++        updates_tab_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
++        updates_tab_scroll.setWidget(updates_tab)
++        tabs.addTab(updates_tab_scroll, "Actualizaciones")
+ 
+         # Controles MIDI globales: permiten usar botones físicos que no sean PAD.
+         midi_tab = QWidget(); mform = QFormLayout(midi_tab)
+@@ -652,7 +752,12 @@
+         self.midi_test_history.setMaximumHeight(150)
+         mform.addRow("Historial", self.midi_test_history)
+ 
+-        tabs.addTab(midi_tab, "Controles MIDI")
++        midi_tab_scroll = QScrollArea()
++        midi_tab_scroll.setWidgetResizable(True)
++        midi_tab_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
++        midi_tab_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
++        midi_tab_scroll.setWidget(midi_tab)
++        tabs.addTab(midi_tab_scroll, "Controles MIDI")
+ 
+         layout.addWidget(tabs)
+         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+--- a/app_source/app/ui/osd.py
++++ b/app_source/app/ui/osd.py
+@@ -4,7 +4,7 @@
+ 
+ from PySide6.QtCore import QTimer, Qt
+ from PySide6.QtGui import QGuiApplication, QIcon, QFontMetrics
+-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
++from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
+ 
+ 
+ class ActionOsd(QWidget):
+@@ -139,8 +139,19 @@
+         self.resize(target, self.sizeHint().height())
+ 
+     def _present(self, duration_ms: int) -> None:
+-        # Ajustar geometría antes de calcular la posición evita que Qt mueva la
+-        # cápsula después de colocarla, especialmente con escalado DPI.
++        # Primera presentación: Qt todavía no siempre ha calculado las métricas
++        # finales de icono/texto. Forzamos polish + layout antes de posicionar.
++        self.ensurePolished()
++        self.card.ensurePolished()
++        if self.card.layout() is not None:
++            self.card.layout().activate()
++        if self.layout() is not None:
++            self.layout().activate()
++        self.card.adjustSize()
++        self.adjustSize()
++        QApplication.processEvents()
++        if self.card.layout() is not None:
++            self.card.layout().activate()
+         self.card.adjustSize()
+         self.adjustSize()
+         geo = self._screen_geometry()
+--- a/app_source/app/version.py
++++ b/app_source/app/version.py
+@@ -1 +1 @@
+-__version__ = "1.1.4 Stable"
++__version__ = "1.1.5 Stable"
+--- a/MIDI_Premium_2.spec
++++ b/MIDI_Premium_2.spec
+@@ -48,6 +48,7 @@
+     upx=True,
+     console=False,
+     disable_windowed_traceback=False,
++    icon=str(project / "assets" / "app_icon.ico"),
+ )
+ coll = COLLECT(
+     exe,
+--- a/MIDI_Premium_2_Setup.iss
++++ b/MIDI_Premium_2_Setup.iss
+@@ -1,5 +1,5 @@
+ #define MyAppName "MIDI Premium 2"
+-#define MyAppVersion "1.1.4"
++#define MyAppVersion "1.1.5"
+ #define MyAppPublisher "MIDI Premium 2"
+ #define MyAppExeName "MIDI Premium 2.exe"
+ 
+@@ -12,7 +12,7 @@
+ DefaultGroupName={#MyAppName}
+ DisableProgramGroupPage=yes
+ OutputDir=release
+-OutputBaseFilename=MIDI_Premium_2_Setup_v1.1.4
++OutputBaseFilename=MIDI_Premium_2_Setup_v1.1.5
+ Compression=lzma2
+ SolidCompression=yes
+ WizardStyle=modern
+@@ -20,6 +20,7 @@
+ ArchitecturesAllowed=x64compatible
+ ArchitecturesInstallIn64BitMode=x64compatible
+ UninstallDisplayIcon={app}\{#MyAppExeName}
++SetupIconFile=app_source\assets\app_icon.ico
+ CloseApplications=yes
+ RestartApplications=yes
+ 
+--- a/app_source/CHANGELOG.md
++++ b/app_source/CHANGELOG.md
+@@ -1,5 +1,13 @@
+ # Changelog
+ 
++## 1.1.5 Stable
++- Nuevo icono oficial de MIDI Premium 2 adaptado a Windows y al ejecutable/instalador.
++- Selector “Insertar desde PSD” rediseñado con búsqueda, filtros, favoritos, recientes, contador y doble clic para insertar.
++- El selector PSD ahora conoce el estado visible/oculto de las capas y grupos.
++- Configuración compacta con pestañas desplazables y Guardar/Cancelar siempre accesibles.
++- Corrección del OSD en su primera aparición forzando el cálculo de geometría antes de posicionarlo.
++
++
+ ## 1.1.4 Stable
+ - Reorganiza el modo compacto para eliminar espacios muertos.
+ - Unifica Controlador, BANK A/B y estado MIDI en una sola barra.
+--- a/latest.json
++++ b/latest.json
+@@ -1,8 +1,8 @@
+ {
+-  "version": "1.1.4",
+-  "tag": "v1.1.4",
++  "version": "1.1.5",
++  "tag": "v1.1.5",
+   "repo": "LuissMaker/MIDI-PREMIUM-2",
+-  "setup_asset": "MIDI_Premium_2_Setup_v1.1.4.exe",
+-  "portable_asset": "MIDI_Premium_2_v1.1.4_Portable.zip",
+-  "notes": "Reorganización completa del modo compacto: sin espacios muertos, barra Controlador/Banks/MIDI unificada, PADs cuadrados y legibles, perillas más compactas."
++  "setup_asset": "MIDI_Premium_2_Setup_v1.1.5.exe",
++  "portable_asset": "MIDI_Premium_2_v1.1.5_Portable.zip",
++  "notes": "Nuevo selector de elementos PSD, configuración compacta, corrección del OSD en la primera aparición y nuevo icono oficial de MIDI Premium 2."
+ }
