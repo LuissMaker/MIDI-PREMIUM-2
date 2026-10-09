@@ -1,0 +1,67 @@
+name: Release MIDI Premium 2 v1.1.5
+on:
+  push:
+    paths:
+      - '.github/workflows/release_v115.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare source
+        shell: pwsh
+        run: |
+          $b=(Get-Content source_bundle/full_v114.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes("base.tar.xz",[Convert]::FromBase64String($b))
+          mkdir reconstructed
+          tar -xf base.tar.xz -C reconstructed
+          $p=(Get-ChildItem reconstructed -Filter MIDI_Premium_2.spec -Recurse|Select-Object -First 1).Directory.FullName
+          "PROJECT_ROOT=$p" >> $env:GITHUB_ENV
+          $s="$env:GITHUB_WORKSPACE/patches_v115/files"
+          Copy-Item "$s/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$s/app_source/app/actions/photoshop_psd.py" "$p/app_source/app/actions/photoshop_psd.py" -Force
+          Copy-Item "$s/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+          Copy-Item "$s/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          Copy-Item "$s/app_source/app/version.py" "$p/app_source/app/version.py" -Force
+          Copy-Item "$s/MIDI_Premium_2.spec" "$p/MIDI_Premium_2.spec" -Force
+          Copy-Item "$s/MIDI_Premium_2_Setup.iss" "$p/MIDI_Premium_2_Setup.iss" -Force
+          $i=(Get-Content patches_v115/app_icon_ico.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes("$p/app_source/assets/app_icon.ico",[Convert]::FromBase64String($i))
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Build
+        shell: pwsh
+        run: |
+          pip install -r "$env:PROJECT_ROOT/app_source/requirements.txt" pyinstaller==6.11.1
+          choco install innosetup -y --no-progress
+          python -m compileall -q "$env:PROJECT_ROOT/app_source"
+          cd "$env:PROJECT_ROOT"
+          python -m PyInstaller --noconfirm --clean MIDI_Premium_2.spec
+          mkdir release -Force
+          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.5_Portable.zip" -Force
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1.5
+          name: MIDI Premium 2 v1.1.5
+          body: "Nuevo selector PSD, configuración compacta, OSD corregido en primera aparición y nuevo icono oficial."
+          files: |
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.5_Portable.zip
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.5.exe
+          make_latest: true
+      - name: Update manifest
+        shell: pwsh
+        run: |
+          cd "$env:GITHUB_WORKSPACE"
+          '{"version":"1.1.5","tag":"v1.1.5","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.5.exe","portable_asset":"MIDI_Premium_2_v1.1.5_Portable.zip","notes":"Nuevo selector PSD, configuración compacta, OSD corregido en primera aparición y nuevo icono oficial."}' | Set-Content latest.json
+          git config user.name "MIDI Premium Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add latest.json
+          git commit -m "Publish v1.1.5 manifest [skip ci]"
+          git push
