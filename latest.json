@@ -1,1 +1,1 @@
-{"version":"1.1.7","tag":"v1.1.7","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.7.exe","portable_asset":"MIDI_Premium_2_v1.1.7_Portable.zip","notes":"Instancia única, OSD reconstruido, encabezado limpio y nuevos iconos de modo compacto y MIDI."}
+{"version":"1.1.8","tag":"v1.1.8","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.8.exe","portable_asset":"MIDI_Premium_2_v1.1.8_Portable.zip","notes":"Build conservador sin UPX para reducir falsos positivos de Defender; mantiene las funciones de v1.1.7."}
