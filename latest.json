@@ -1,1 +1,1 @@
-{"version":"1.1.11","tag":"v1.1.11","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.11.exe","portable_asset":"MIDI_Premium_2_v1.1.11_Portable.zip","notes":"Recompilado con cx_Freeze para reducir bloqueos de Defender; arranque verificado."}
+{"version":"1.1.12","tag":"v1.1.12","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.12.exe","portable_asset":"MIDI_Premium_2_v1.1.12_Portable.zip","notes":"Hotfix de recursos: iconos restaurados en build cx_Freeze y verificados antes de publicar."}
