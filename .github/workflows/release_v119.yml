@@ -1,0 +1,114 @@
+name: Release MIDI Premium 2 v1.1.9
+on:
+  push:
+    paths:
+      - '.github/workflows/release_v119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare v1.1.9 source
+        shell: pwsh
+        run: |
+          $b=(Get-Content source_bundle/full_v114.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes("base.tar.xz",[Convert]::FromBase64String($b))
+          New-Item -ItemType Directory -Force -Path reconstructed | Out-Null
+          tar -xf base.tar.xz -C reconstructed
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract source bundle" }
+          $p=(Get-ChildItem reconstructed -Filter MIDI_Premium_2.spec -Recurse | Select-Object -First 1).Directory.FullName
+          if (-not $p) { throw "Project root not found" }
+          "PROJECT_ROOT=$p" >> $env:GITHUB_ENV
+
+          $v115="$env:GITHUB_WORKSPACE/patches_v115/files"
+          Copy-Item "$v115/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$v115/app_source/app/actions/photoshop_psd.py" "$p/app_source/app/actions/photoshop_psd.py" -Force
+          Copy-Item "$v115/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+          Copy-Item "$v115/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          $icon=(Get-Content "$env:GITHUB_WORKSPACE/patches_v115/app_icon_ico.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("$p/app_source/assets/app_icon.ico",[Convert]::FromBase64String($icon))
+
+          $v116="$env:GITHUB_WORKSPACE/patches_v116/files"
+          Copy-Item "$v116/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+
+          $v117="$env:GITHUB_WORKSPACE/patches_v117/files"
+          Copy-Item "$v117/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$v117/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          Copy-Item "$v117/app_source/app/ui/theme.py" "$p/app_source/app/ui/theme.py" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/compact_mode.svg" "$p/app_source/assets/ui_icons/compact_mode.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_status.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_connected.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_disconnected.svg" -Force
+          python "$env:GITHUB_WORKSPACE/patches_v117/apply_main_window.py" "$p"
+
+          $v118="$env:GITHUB_WORKSPACE/patches_v118/files"
+          Copy-Item "$v118/MIDI_Premium_2_Setup.iss" "$p/MIDI_Premium_2_Setup.iss" -Force
+
+          $v119="$env:GITHUB_WORKSPACE/patches_v119/files"
+          Copy-Item "$v119/MIDI_Premium_2.spec" "$p/MIDI_Premium_2.spec" -Force
+          Copy-Item "$v119/app_source/app/version.py" "$p/app_source/app/version.py" -Force
+
+          $iss=Get-Content "$p/MIDI_Premium_2_Setup.iss" -Raw
+          $iss=$iss.Replace('1.1.8','1.1.9')
+          $iss=$iss.Replace('MIDI_Premium_2_Setup_v1.1.8','MIDI_Premium_2_Setup_v1.1.9')
+          Set-Content "$p/MIDI_Premium_2_Setup.iss" $iss -Encoding utf8
+
+          if (!(Test-Path "$p/app_source/app/version.py")) { throw "app/version.py missing before build" }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Build and verify
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "$env:PROJECT_ROOT/app_source/requirements.txt" pyinstaller==6.11.1
+          choco install innosetup -y --no-progress
+          $env:PYTHONPATH="$env:PROJECT_ROOT/app_source"
+          python -c "import app.version; print(app.version.__version__)"
+          python -m compileall -q "$env:PROJECT_ROOT/app_source"
+          Set-Location "$env:PROJECT_ROOT"
+          python -m PyInstaller --noconfirm --clean MIDI_Premium_2.spec
+          if (!(Test-Path "dist/MIDI Premium 2/MIDI Premium 2.exe")) { throw "Executable not generated" }
+          $archive = & python -m PyInstaller.utils.cliutils.archive_viewer "dist/MIDI Premium 2/MIDI Premium 2.exe" -l 2>&1 | Out-String
+          if ($archive -notmatch "app.version") { throw "app.version was not bundled into the executable" }
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.9_Portable.zip" -Force
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
+          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.9.exe")) { throw "Installer not generated" }
+
+      - name: Publish v1.1.9
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1.9
+          name: MIDI Premium 2 v1.1.9
+          body: |
+            MIDI Premium 2 v1.1.9
+
+            - Hotfix de arranque para v1.1.8.
+            - Corrige ModuleNotFoundError: app.version.
+            - app.version y app.core.updater se incluyen explícitamente en PyInstaller.
+            - El workflow verifica que app.version exista dentro del ejecutable antes de publicar.
+            - Mantiene el build sin UPX y todas las mejoras de v1.1.8.
+          files: |
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.9_Portable.zip
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.9.exe
+          make_latest: true
+
+      - name: Update manifest
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE"
+          '{"version":"1.1.9","tag":"v1.1.9","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.9.exe","portable_asset":"MIDI_Premium_2_v1.1.9_Portable.zip","notes":"Hotfix de arranque: app.version ahora se incluye y se verifica dentro del ejecutable."}' | Set-Content latest.json
+          git config user.name "MIDI Premium Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add latest.json
+          git commit -m "Publish v1.1.9 manifest [skip ci]"
+          git push
