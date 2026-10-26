@@ -1,1 +1,1 @@
-{"version":"1.1.9","tag":"v1.1.9","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.9.exe","portable_asset":"MIDI_Premium_2_v1.1.9_Portable.zip","notes":"Hotfix de arranque: app.version ahora se incluye y se verifica dentro del ejecutable."}
+{"version":"1.1.10","tag":"v1.1.10","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.10.exe","portable_asset":"MIDI_Premium_2_v1.1.10_Portable.zip","notes":"Hotfix de arranque verificado con autoprueba real del EXE congelado."}
