@@ -1,1 +1,1 @@
-{"version":"1.1.10","tag":"v1.1.10","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.10.exe","portable_asset":"MIDI_Premium_2_v1.1.10_Portable.zip","notes":"Hotfix de arranque verificado con autoprueba real del EXE congelado."}
+{"version":"1.1.11","tag":"v1.1.11","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.11.exe","portable_asset":"MIDI_Premium_2_v1.1.11_Portable.zip","notes":"Recompilado con cx_Freeze para reducir bloqueos de Defender; arranque verificado."}
