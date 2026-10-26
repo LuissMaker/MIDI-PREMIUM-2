@@ -1,0 +1,102 @@
+name: Release MIDI Premium 2 v1.1.8
+on:
+  push:
+    paths:
+      - '.github/workflows/release_v118.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare v1.1.8 source
+        shell: pwsh
+        run: |
+          $b=(Get-Content source_bundle/full_v114.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes("base.tar.xz",[Convert]::FromBase64String($b))
+          New-Item -ItemType Directory -Force -Path reconstructed | Out-Null
+          tar -xf base.tar.xz -C reconstructed
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract source bundle" }
+          $p=(Get-ChildItem reconstructed -Filter MIDI_Premium_2.spec -Recurse | Select-Object -First 1).Directory.FullName
+          if (-not $p) { throw "Project root not found" }
+          "PROJECT_ROOT=$p" >> $env:GITHUB_ENV
+
+          $v115="$env:GITHUB_WORKSPACE/patches_v115/files"
+          Copy-Item "$v115/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$v115/app_source/app/actions/photoshop_psd.py" "$p/app_source/app/actions/photoshop_psd.py" -Force
+          Copy-Item "$v115/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+          Copy-Item "$v115/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          Copy-Item "$v115/app_source/app/version.py" "$p/app_source/app/version.py" -Force
+          $icon=(Get-Content "$env:GITHUB_WORKSPACE/patches_v115/app_icon_ico.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("$p/app_source/assets/app_icon.ico",[Convert]::FromBase64String($icon))
+
+          $v116="$env:GITHUB_WORKSPACE/patches_v116/files"
+          Copy-Item "$v116/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+
+          $v117="$env:GITHUB_WORKSPACE/patches_v117/files"
+          Copy-Item "$v117/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$v117/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          Copy-Item "$v117/app_source/app/ui/theme.py" "$p/app_source/app/ui/theme.py" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/compact_mode.svg" "$p/app_source/assets/ui_icons/compact_mode.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_status.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_connected.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_disconnected.svg" -Force
+          python "$env:GITHUB_WORKSPACE/patches_v117/apply_main_window.py" "$p"
+
+          $v118="$env:GITHUB_WORKSPACE/patches_v118/files"
+          Copy-Item "$v118/MIDI_Premium_2.spec" "$p/MIDI_Premium_2.spec" -Force
+          Copy-Item "$v118/MIDI_Premium_2_Setup.iss" "$p/MIDI_Premium_2_Setup.iss" -Force
+          Copy-Item "$v118/app_source/app/version.py" "$p/app_source/app/version.py" -Force
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Build and verify
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "$env:PROJECT_ROOT/app_source/requirements.txt" pyinstaller==6.11.1
+          choco install innosetup -y --no-progress
+          python -m compileall -q "$env:PROJECT_ROOT/app_source"
+          Set-Location "$env:PROJECT_ROOT"
+          python -m PyInstaller --noconfirm --clean MIDI_Premium_2.spec
+          if (!(Test-Path "dist/MIDI Premium 2/MIDI Premium 2.exe")) { throw "Executable not generated" }
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.8_Portable.zip" -Force
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
+          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.8.exe")) { throw "Installer not generated" }
+
+      - name: Publish v1.1.8
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1.8
+          name: MIDI Premium 2 v1.1.8
+          body: |
+            MIDI Premium 2 v1.1.8
+
+            - Recompilación conservadora para reducir falsos positivos de Windows Defender.
+            - UPX desactivado por completo.
+            - Exclusión de módulos de desarrollo/prueba no necesarios.
+            - Mantiene instancia única, OSD reconstruido, selector PSD por grupos y los nuevos iconos.
+            - No modifica perfiles ni configuraciones del usuario.
+          files: |
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.8_Portable.zip
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.8.exe
+          make_latest: true
+
+      - name: Update manifest
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE"
+          '{"version":"1.1.8","tag":"v1.1.8","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.8.exe","portable_asset":"MIDI_Premium_2_v1.1.8_Portable.zip","notes":"Build conservador sin UPX para reducir falsos positivos de Defender; mantiene las funciones de v1.1.7."}' | Set-Content latest.json
+          git config user.name "MIDI Premium Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add latest.json
+          git commit -m "Publish v1.1.8 manifest [skip ci]"
+          git push
