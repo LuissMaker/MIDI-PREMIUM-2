@@ -1,0 +1,131 @@
+name: Release MIDI Premium 2 v1.1.10
+on:
+  push:
+    paths:
+      - '.github/workflows/release_v110.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare v1.1.10 source
+        shell: pwsh
+        run: |
+          $b=(Get-Content source_bundle/full_v114.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes("base.tar.xz",[Convert]::FromBase64String($b))
+          New-Item -ItemType Directory -Force -Path reconstructed | Out-Null
+          tar -xf base.tar.xz -C reconstructed
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract source bundle" }
+          $p=(Get-ChildItem reconstructed -Filter MIDI_Premium_2.spec -Recurse | Select-Object -First 1).Directory.FullName
+          if (-not $p) { throw "Project root not found" }
+          "PROJECT_ROOT=$p" >> $env:GITHUB_ENV
+
+          $v115="$env:GITHUB_WORKSPACE/patches_v115/files"
+          Copy-Item "$v115/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$v115/app_source/app/actions/photoshop_psd.py" "$p/app_source/app/actions/photoshop_psd.py" -Force
+          Copy-Item "$v115/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+          Copy-Item "$v115/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          $icon=(Get-Content "$env:GITHUB_WORKSPACE/patches_v115/app_icon_ico.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("$p/app_source/assets/app_icon.ico",[Convert]::FromBase64String($icon))
+
+          $v116="$env:GITHUB_WORKSPACE/patches_v116/files"
+          Copy-Item "$v116/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+
+          $v117="$env:GITHUB_WORKSPACE/patches_v117/files"
+          Copy-Item "$v117/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$v117/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          Copy-Item "$v117/app_source/app/ui/theme.py" "$p/app_source/app/ui/theme.py" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/compact_mode.svg" "$p/app_source/assets/ui_icons/compact_mode.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_status.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_connected.svg" -Force
+          Copy-Item "$v117/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_disconnected.svg" -Force
+          python "$env:GITHUB_WORKSPACE/patches_v117/apply_main_window.py" "$p"
+
+          $v118="$env:GITHUB_WORKSPACE/patches_v118/files"
+          Copy-Item "$v118/MIDI_Premium_2.spec" "$p/MIDI_Premium_2.spec" -Force
+          Copy-Item "$v118/MIDI_Premium_2_Setup.iss" "$p/MIDI_Premium_2_Setup.iss" -Force
+
+          python "$env:GITHUB_WORKSPACE/patches_v110/apply_v110.py" "$p"
+
+          $iss=Get-Content "$p/MIDI_Premium_2_Setup.iss" -Raw
+          $iss=$iss.Replace('1.1.8','1.1.10')
+          $iss=$iss.Replace('MIDI_Premium_2_Setup_v1.1.8','MIDI_Premium_2_Setup_v1.1.10')
+          Set-Content "$p/MIDI_Premium_2_Setup.iss" $iss -Encoding utf8
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Build and startup-test
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "$env:PROJECT_ROOT/app_source/requirements.txt" pyinstaller==6.11.1
+          choco install innosetup -y --no-progress
+
+          python -m compileall -q "$env:PROJECT_ROOT/app_source"
+          if (Select-String -Path "$env:PROJECT_ROOT/app_source/app/core/updater.py","$env:PROJECT_ROOT/app_source/app/ui/main_window.py" -Pattern "from app.version" -Quiet) {
+            throw "Residual app.version import found before build"
+          }
+
+          Set-Location "$env:PROJECT_ROOT"
+          python -m PyInstaller --noconfirm --clean MIDI_Premium_2.spec
+          if (!(Test-Path "dist/MIDI Premium 2/MIDI Premium 2.exe")) { throw "Executable not generated" }
+
+          $marker = Join-Path $env:RUNNER_TEMP "midi_premium_smoke_ok.txt"
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
+          $env:MIDI_PREMIUM_SMOKE_MARKER = $marker
+          $proc = Start-Process -FilePath "dist/MIDI Premium 2/MIDI Premium 2.exe" -PassThru
+          $deadline = (Get-Date).AddSeconds(12)
+          while ((Get-Date) -lt $deadline -and !(Test-Path $marker) -and !$proc.HasExited) {
+            Start-Sleep -Milliseconds 250
+          }
+          if (!(Test-Path $marker)) {
+            if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            throw "Startup smoke marker was not created; frozen imports/startup failed"
+          }
+          $markerText = (Get-Content $marker -Raw).Trim()
+          if ($markerText -ne "OK") { throw "Unexpected smoke marker content" }
+          if (!$proc.HasExited) {
+            Wait-Process -Id $proc.Id -Timeout 5 -ErrorAction SilentlyContinue
+            if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.10_Portable.zip" -Force
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
+          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.10.exe")) { throw "Installer not generated" }
+
+      - name: Publish v1.1.10
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1.10
+          name: MIDI Premium 2 v1.1.10
+          body: |
+            MIDI Premium 2 v1.1.10
+
+            - Corrige de raíz el fallo ModuleNotFoundError: app.version.
+            - El actualizador y la ventana principal ya no dependen de app.version al arrancar.
+            - Añade una autoprueba real al EXE congelado: la Release no se publica si todos los imports no cargan correctamente.
+            - Mantiene build sin UPX y las mejoras visuales/funcionales anteriores.
+          files: |
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.10_Portable.zip
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.10.exe
+          make_latest: true
+
+      - name: Update manifest
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE"
+          '{"version":"1.1.10","tag":"v1.1.10","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.10.exe","portable_asset":"MIDI_Premium_2_v1.1.10_Portable.zip","notes":"Hotfix de arranque verificado con autoprueba real del EXE congelado."}' | Set-Content latest.json
+          git config user.name "MIDI Premium Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add latest.json
+          git commit -m "Publish v1.1.10 manifest [skip ci]"
+          git push
