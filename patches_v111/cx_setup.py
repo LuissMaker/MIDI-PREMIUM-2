@@ -1,8 +1,10 @@
 from pathlib import Path
+import sys
 from cx_Freeze import setup, Executable
 
 root = Path(__file__).resolve().parent
 src = root / "app_source"
+sys.path.insert(0, str(src))
 
 build_exe_options = {
     "packages": [
