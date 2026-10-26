@@ -1,0 +1,62 @@
+# -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
+
+project = Path(SPECPATH) / "app_source"
+
+datas = [
+    (str(project / "assets"), "assets"),
+    (str(project / "Scripts"), "Scripts"),
+    (str(project / "app" / "actions" / "photoshop_jsx_bridge.vbs"), "app/actions"),
+    (str(project / "PORTABLE.flag"), "."),
+]
+
+binaries = []
+hiddenimports = ["mido.backends.rtmidi"]
+
+# Empaquetado conservador: solo dependencias que la app usa realmente.
+for package in ("PySide6", "rtmidi", "pynput", "websocket"):
+    try:
+        d, b, h = collect_all(package)
+        datas += d
+        binaries += b
+        hiddenimports += h
+    except Exception:
+        pass
+
+a = Analysis(
+    [str(project / "main.py")],
+    pathex=[str(project)],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=["tkinter", "pytest", "unittest", "pydoc", "doctest"],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="MIDI Premium 2",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    icon=str(project / "assets" / "app_icon.ico"),
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="MIDI Premium 2",
+)
