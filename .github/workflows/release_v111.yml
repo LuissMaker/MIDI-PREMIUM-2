@@ -1,4 +1,5 @@
 name: Release MIDI Premium 2 v1.1.11
+# rerun after cx_Freeze path fix
 on:
   push:
     paths:
