@@ -77,8 +77,10 @@ jobs:
           Set-Location "$env:PROJECT_ROOT"
           python -m PyInstaller --noconfirm --clean MIDI_Premium_2.spec
           if (!(Test-Path "dist/MIDI Premium 2/MIDI Premium 2.exe")) { throw "Executable not generated" }
-          $archive = & python -m PyInstaller.utils.cliutils.archive_viewer "dist/MIDI Premium 2/MIDI Premium 2.exe" -l 2>&1 | Out-String
-          if ($archive -notmatch "app.version") { throw "app.version was not bundled into the executable" }
+          $proc = Start-Process -FilePath "dist/MIDI Premium 2/MIDI Premium 2.exe" -PassThru
+          Start-Sleep -Seconds 6
+          if ($proc.HasExited) { throw "Built application exited during startup smoke test (exit code $($proc.ExitCode))" }
+          Stop-Process -Id $proc.Id -Force
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Compress-Archive -Path "dist/MIDI Premium 2/*" -DestinationPath "release/MIDI_Premium_2_v1.1.9_Portable.zip" -Force
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Setup.iss
