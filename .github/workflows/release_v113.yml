@@ -2,7 +2,7 @@ name: Release MIDI Premium 2 v1.1.13
 on:
   push:
     paths:
-      - '.github/workflows/release_v112.yml'
+      - '.github/workflows/release_v113.yml'
   workflow_dispatch:
 
 permissions:
