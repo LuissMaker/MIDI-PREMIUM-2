@@ -1,0 +1,25 @@
+name: Inspect OBS source
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect_obs.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract and print OBS files
+        shell: bash
+        run: |
+          base64 -d source_bundle/full_v114.b64 > base.tar.xz
+          mkdir reconstructed
+          tar -xf base.tar.xz -C reconstructed
+          ROOT=$(find reconstructed -name MIDI_Premium_2.spec -printf '%h\n' | head -n1)
+          echo "=== OBS_PANEL ==="
+          cat "$ROOT/app_source/app/widgets/obs_panel.py"
+          echo "=== OBS_ENGINE ==="
+          cat "$ROOT/app_source/app/obs/engine.py"
+          echo "=== ACTION_EDITOR_OBS ==="
+          grep -n -A120 -B20 "obs_" "$ROOT/app_source/app/widgets/action_editor.py" || true
