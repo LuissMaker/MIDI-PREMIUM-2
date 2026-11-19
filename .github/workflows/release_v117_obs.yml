@@ -1,0 +1,206 @@
+name: Release MIDI Premium 2 v1.1.17 Runtime
+on:
+  push:
+    paths:
+      - '.github/workflows/release_v117_obs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare source
+        shell: pwsh
+        run: |
+          $b=(Get-Content source_bundle/full_v114.b64 -Raw).Trim()
+          [IO.File]::WriteAllBytes("base.tar.xz",[Convert]::FromBase64String($b))
+          New-Item -ItemType Directory -Force -Path reconstructed | Out-Null
+          tar -xf base.tar.xz -C reconstructed
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract source bundle" }
+          $p=(Get-ChildItem reconstructed -Filter MIDI_Premium_2.spec -Recurse | Select-Object -First 1).Directory.FullName
+          if (-not $p) { throw "Project root not found" }
+          "PROJECT_ROOT=$p" >> $env:GITHUB_ENV
+
+          $v115="$env:GITHUB_WORKSPACE/patches_v115/files"
+          Copy-Item "$v115/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$v115/app_source/app/actions/photoshop_psd.py" "$p/app_source/app/actions/photoshop_psd.py" -Force
+          Copy-Item "$v115/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+          Copy-Item "$v115/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          $icon=(Get-Content "$env:GITHUB_WORKSPACE/patches_v115/app_icon_ico.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("$p/app_source/assets/app_icon.ico",[Convert]::FromBase64String($icon))
+
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v116/files/app_source/app/widgets/config_dialogs.py" "$p/app_source/app/widgets/config_dialogs.py" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v117/files/app_source/main.py" "$p/app_source/main.py" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v117/files/app_source/app/ui/osd.py" "$p/app_source/app/ui/osd.py" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v117/files/app_source/app/ui/theme.py" "$p/app_source/app/ui/theme.py" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v117/files/app_source/assets/ui_icons/compact_mode.svg" "$p/app_source/assets/ui_icons/compact_mode.svg" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v117/files/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_status.svg" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v117/files/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_connected.svg" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE/patches_v117/files/app_source/assets/ui_icons/midi_status.svg" "$p/app_source/assets/ui_icons/midi_disconnected.svg" -Force
+          python "$env:GITHUB_WORKSPACE/patches_v117/apply_main_window.py" "$p"
+
+          python "$env:GITHUB_WORKSPACE/patches_v110/apply_v110.py" "$p"
+          python "$env:GITHUB_WORKSPACE/patches_v112/apply_v112.py" "$p"
+          python "$env:GITHUB_WORKSPACE/patches_v113/apply_v113.py" "$p"
+          python "$env:GITHUB_WORKSPACE/patches_v114_obs/apply_v114_obs.py" "$p" "$env:GITHUB_WORKSPACE/patches_v114_obs/obs_panel.py"
+          python "$env:GITHUB_WORKSPACE/patches_v116_obs/apply_v116_obs.py" "$p" "$env:GITHUB_WORKSPACE/patches_v116_obs/obs_panel.py"
+          python "$env:GITHUB_WORKSPACE/patches_v117_obs/apply_v117_obs.py" "$p"
+
+          $targets=@(
+            "$p/app_source/main.py",
+            "$p/app_source/app/core/updater.py",
+            "$p/app_source/app/ui/main_window.py",
+            "$p/app_source/app/version.py"
+          )
+          foreach($t in $targets){
+            $txt=Get-Content $t -Raw
+            $txt=$txt.Replace('1.1.14 Stable','1.1.17 Stable')
+            Set-Content $t $txt -Encoding utf8
+          }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Build runtime distribution
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          python -m compileall -q "$env:PROJECT_ROOT/app_source"
+          $env:PYTHONPATH="$env:PROJECT_ROOT/app_source"
+          $env:QT_QPA_PLATFORM="offscreen"
+          python -c "from PySide6.QtWidgets import QApplication; from app.widgets.obs_panel import ObsPanel; a=QApplication([]); p=ObsPanel(); assert p.minimumHeight()>=168 and p.maximumHeight()<=205; assert p.get_settings()['host']=='localhost' and p.get_settings()['port']==4455; print('OBS panel geometry OK')"
+          python -c "from pathlib import Path; s=Path(r'$env:PROJECT_ROOT/app_source/app/ui/main_window.py').read_text(encoding='utf-8'); assert s.index('layout.addWidget(self.obs_panel)') < s.index('layout.addWidget(self.action_editor, 1)'); assert 'self.action_editor.setMaximumHeight(245)' in s; print('OBS layout order OK')"
+          python -c "from pathlib import Path; s=Path(r'$env:PROJECT_ROOT/app_source/app/obs/engine.py').read_text(encoding='utf-8'); block=s.split('def _connect_worker',1)[1].split('def _friendly_connection_error',1)[0]; assert 'self.get_scenes()' not in block and 'self.get_inputs()' not in block and 'self.connected.emit(info)' in block; print('OBS fast-connect logic OK')"
+
+          $dist="$env:PROJECT_ROOT/runtime_dist"
+          $runtime="$dist/runtime"
+          $app="$dist/app"
+          New-Item -ItemType Directory -Force -Path $runtime,$app | Out-Null
+
+          # Official CPython embeddable runtime. No custom frozen executable.
+          $zip="$env:RUNNER_TEMP/python-embed.zip"
+          Invoke-WebRequest "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $runtime -Force
+
+          Copy-Item "$env:PROJECT_ROOT/app_source/*" $app -Recurse -Force
+
+          # Install app dependencies beside the official runtime.
+          New-Item -ItemType Directory -Force -Path "$runtime/Lib/site-packages" | Out-Null
+          python -m pip install --upgrade pip
+          python -m pip install --target "$runtime/Lib/site-packages" -r "$env:PROJECT_ROOT/app_source/requirements.txt"
+
+          # Make the embedded runtime load site-packages and the app folder.
+          $pth=Get-ChildItem $runtime -Filter "python*._pth" | Select-Object -First 1
+          if (-not $pth) { throw "Embedded Python ._pth file not found" }
+          @(
+            "python311.zip",
+            ".",
+            "Lib\site-packages",
+            "..\app",
+            "import site"
+          ) | Set-Content $pth.FullName -Encoding ascii
+
+          # Verify the exact runtime that users will receive.
+          $env:PYTHONPATH="$app"
+          $env:QT_QPA_PLATFORM="offscreen"
+          & "$runtime/python.exe" -c "import PySide6, mido, pynput, websocket; from app.widgets.obs_panel import ObsPanel; print('runtime imports OK')"
+          if ($LASTEXITCODE -ne 0) { throw "Embedded runtime import test failed" }
+
+          # Smoke test app startup through official pythonw.exe.
+          $marker=Join-Path $env:RUNNER_TEMP "runtime_smoke.txt"
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
+          $env:MIDI_PREMIUM_SMOKE_MARKER=$marker
+          $scriptPath = Join-Path $app "main.py"
+          $proc=Start-Process -FilePath "$runtime/pythonw.exe" -ArgumentList @($scriptPath) -WorkingDirectory $app -PassThru
+          $deadline=(Get-Date).AddSeconds(15)
+          while((Get-Date) -lt $deadline -and !(Test-Path $marker) -and !$proc.HasExited){
+            Start-Sleep -Milliseconds 250
+          }
+          if(!(Test-Path $marker)){
+            if(!$proc.HasExited){ Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            throw "Runtime startup smoke test failed"
+          }
+          if(!$proc.HasExited){ Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+
+          # Launcher used by shortcuts; it only invokes the official pythonw.exe.
+          @'
+          @echo off
+          cd /d "%~dp0"
+          start "" "%~dp0runtime\pythonw.exe" "%~dp0app\main.py"
+          '@ | Set-Content "$dist/MIDI Premium 2.cmd" -Encoding ascii
+
+          # Inno installer: installs source + official runtime, no MIDI Premium 2.exe.
+          $iss=@'
+          #define MyAppName "MIDI Premium 2"
+          #define MyAppVersion "1.1.17"
+
+          [Setup]
+          AppId={{8D4894A5-5F9D-4B65-908C-5A86E6D69D44}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          DefaultDirName={autopf}\{#MyAppName}
+          DefaultGroupName={#MyAppName}
+          DisableProgramGroupPage=yes
+          OutputDir=release
+          OutputBaseFilename=MIDI_Premium_2_Setup_v1.1.17
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          PrivilegesRequired=admin
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          SetupIconFile=runtime_dist\app\assets\app_icon.ico
+
+          [Files]
+          Source: "runtime_dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{autoprograms}\MIDI Premium 2"; Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\main.py"""; WorkingDir: "{app}\app"; IconFilename: "{app}\app\assets\app_icon.ico"
+          Name: "{autodesktop}\MIDI Premium 2"; Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\main.py"""; WorkingDir: "{app}\app"; IconFilename: "{app}\app\assets\app_icon.ico"
+
+          [Run]
+          Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\main.py"""; WorkingDir: "{app}\app"; Description: "Abrir MIDI Premium 2"; Flags: nowait postinstall skipifsilent
+          '@
+          $iss | Set-Content "$env:PROJECT_ROOT/MIDI_Premium_2_Runtime_Setup.iss" -Encoding utf8
+
+          Set-Location "$env:PROJECT_ROOT"
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Compress-Archive -Path "runtime_dist/*" -DestinationPath "release/MIDI_Premium_2_v1.1.17_Runtime_Portable.zip" -Force
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MIDI_Premium_2_Runtime_Setup.iss
+          if (!(Test-Path "release/MIDI_Premium_2_Setup_v1.1.17.exe")) { throw "Runtime installer not generated" }
+
+      - name: Publish v1.1.17
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1.17
+          name: MIDI Premium 2 v1.1.17 Runtime
+          body: |
+            MIDI Premium 2 v1.1.17
+
+            - La conexión OBS ahora se marca como conectada inmediatamente después del handshake/autenticación.
+            - Escenas y fuentes se cargan después en segundo plano, sin dejar la UI atascada en «Conectando…».
+            - Timeout de conexión reducido para fallar más rápido cuando OBS no responde.
+            - Mantiene el panel OBS corregido, runtime oficial de Python, protección Premiere, instancia única, iconos y selector PSD.
+            - El build verifica que _connect_worker ya no espere escenas/fuentes antes de emitir connected.
+          files: |
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_v1.1.17_Runtime_Portable.zip
+            ${{ env.PROJECT_ROOT }}/release/MIDI_Premium_2_Setup_v1.1.17.exe
+          make_latest: true
+
+      - name: Update manifest
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE"
+          '{"version":"1.1.17","tag":"v1.1.17","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.17.exe","portable_asset":"MIDI_Premium_2_v1.1.17_Runtime_Portable.zip","notes":"OBS conecta primero y carga escenas/fuentes después en segundo plano; ya no queda atascado en Conectando."}' | Set-Content latest.json
+          git config user.name "MIDI Premium Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add latest.json
+          git commit -m "Publish v1.1.17 runtime manifest [skip ci]"
+          git push
