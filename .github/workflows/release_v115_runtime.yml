@@ -110,7 +110,8 @@ jobs:
           $marker=Join-Path $env:RUNNER_TEMP "runtime_smoke.txt"
           Remove-Item $marker -Force -ErrorAction SilentlyContinue
           $env:MIDI_PREMIUM_SMOKE_MARKER=$marker
-          $proc=Start-Process -FilePath "$runtime/pythonw.exe" -ArgumentList '"'+(Join-Path $app "main.py")+'"' -WorkingDirectory $app -PassThru
+          $scriptPath = Join-Path $app "main.py"
+          $proc=Start-Process -FilePath "$runtime/pythonw.exe" -ArgumentList @($scriptPath) -WorkingDirectory $app -PassThru
           $deadline=(Get-Date).AddSeconds(15)
           while((Get-Date) -lt $deadline -and !(Test-Path $marker) -and !$proc.HasExited){
             Start-Sleep -Milliseconds 250
