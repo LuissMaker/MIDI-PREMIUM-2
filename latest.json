@@ -1,1 +1,1 @@
-{"version":"1.1.18","tag":"v1.1.18","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.18.exe","portable_asset":"MIDI_Premium_2_v1.1.18_Runtime_Portable.zip","notes":"Motor OBS reemplazado por obsws-python 1.8.1 con timeout corto y conexión WebSocket 5.x mantenida."}
+{"version":"1.1.19","tag":"v1.1.19","repo":"LuissMaker/MIDI-PREMIUM-2","setup_asset":"MIDI_Premium_2_Setup_v1.1.19.exe","portable_asset":"MIDI_Premium_2_v1.1.19_Runtime_Portable.zip","notes":"Hotfix de arranque del nuevo motor OBS: firma ObsEngine corregida y verificada contra main.py."}
