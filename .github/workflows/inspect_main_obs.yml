@@ -1,0 +1,28 @@
+name: Inspect main obs init
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect_main_obs.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract
+        shell: bash
+        run: |
+          base64 -d source_bundle/full_v114.b64 > base.tar.xz
+          mkdir reconstructed
+          tar -xf base.tar.xz -C reconstructed
+          ROOT=$(find reconstructed -name MIDI_Premium_2.spec -printf '%h\n' | head -n1)
+          python patches_v117/apply_main_window.py "$ROOT"
+          python patches_v110/apply_v110.py "$ROOT"
+          python patches_v112/apply_v112.py "$ROOT"
+          python patches_v113/apply_v113.py "$ROOT"
+          python patches_v114_obs/apply_v114_obs.py "$ROOT" patches_v114_obs/obs_panel.py
+          python patches_v116_obs/apply_v116_obs.py "$ROOT" patches_v116_obs/obs_panel.py
+          python patches_v117_obs/apply_v117_obs.py "$ROOT"
+          python patches_v118_obs/apply_v118_obs.py "$ROOT" patches_v118_obs/engine.py
+          sed -n '90,130p' "$ROOT/app_source/main.py"
