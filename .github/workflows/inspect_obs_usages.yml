@@ -1,0 +1,22 @@
+name: Inspect OBS usages
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect_obs_usages.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract and inspect
+        shell: bash
+        run: |
+          base64 -d source_bundle/full_v114.b64 > base.tar.xz
+          mkdir reconstructed
+          tar -xf base.tar.xz -C reconstructed
+          ROOT=$(find reconstructed -name MIDI_Premium_2.spec -printf '%h\n' | head -n1)
+          grep -R "obs_engine\." -n "$ROOT/app_source" || true
+          echo "=== requirements ==="
+          cat "$ROOT/app_source/requirements.txt"
